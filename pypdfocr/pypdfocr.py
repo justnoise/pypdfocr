@@ -81,7 +81,7 @@ class PyPDFOCR(object):
             * Takes the HOCR from Tesseract and creates a new PDF with the text overlay
         * Files the OCR'ed file in the proper place if specified
         * Files the original file if specified
-        * 
+        *
     """
 
     def __init__ (self):
@@ -141,9 +141,15 @@ class PyPDFOCR(object):
 
         p.add_argument('--preprocess', action='store_true',
                 default=False, dest='preprocess', help='Enable preprocessing.  Not really useful now with improved Tesseract 3.04+')
-        
+
         p.add_argument('--skip-preprocess', action='store_true',
                 default=False, dest='skip_preprocess', help='DEPRECATED: always skips now.')
+
+        p.add_argument('--text-pdf', action='store_true',
+                default=False, dest='text_pdf', help='Create a pdf with OCRed text.')
+
+        p.add_argument('--keep-hocr', action='store_true',
+                default=False, dest='keep_hocr', help='Do not delete .hocr intermediate files')
 
         #---------
         # Single or watch mode
@@ -152,7 +158,7 @@ class PyPDFOCR(object):
         # Positional argument for single file conversion
         single_or_watch_group.add_argument("pdf_filename", nargs="?", help="Scanned pdf file to OCR")
         # Watch directory for watch mode
-        single_or_watch_group.add_argument('-w', '--watch', 
+        single_or_watch_group.add_argument('-w', '--watch',
              dest='watch_dir', help='Watch given directory and run ocr automatically until terminated')
 
         #-----------
@@ -171,7 +177,6 @@ class PyPDFOCR(object):
 
 
         # Add flow option to single mode extract_images,preprocess,ocr,write
-
         args = p.parse_args(argv)
 
         self.debug = args.debug
@@ -181,6 +186,8 @@ class PyPDFOCR(object):
         self.watch_dir = args.watch_dir
         self.enable_email = args.mail
         self.match_using_filename = args.match_using_filename
+        self.text_pdf = args.text_pdf
+        self.keep_hocr = args.keep_hocr
 
 
         # Deprecating skip_preprocess to make skipping the default (always true). Tesseract 3.04 is so much better now
@@ -239,7 +246,6 @@ class PyPDFOCR(object):
             except:
                 logging.debug("Error removing file %s .... continuing" % f)
 
-            
 
     def _setup_filing(self):
         """
@@ -282,7 +288,7 @@ class PyPDFOCR(object):
             self.filer = PyFilerEvernote(self.config['evernote_developer_token'])
         else:
             self.filer = PyFilerDirs()
-            
+
         self.filer.target_folder = self.config['target_folder']
         self.filer.default_folder = self.config['default_folder']
         self.filer.original_move_folder = original_move_folder
@@ -310,7 +316,7 @@ class PyPDFOCR(object):
         print (" - %d target filing folders" % (folder_count))
         print (" - %d keywords" % (keyword_count))
 
-    
+
     def _setup_external_tools(self):
         """
             Instantiate the external tool wrappers with their config dicts
@@ -318,7 +324,7 @@ class PyPDFOCR(object):
 
         self.gs = PyGs(self.config.get('ghostscript',{}))
         self.ts = PyTesseract(self.config.get('tesseract',{}))
-        self.pdf = PyPdf(self.gs)
+        self.pdf = PyPdf(self.gs, visible_text = self.text_pdf)
         self.preprocess = PyPreprocess(self.config.get('preprocess', {}))
 
         return
@@ -326,12 +332,12 @@ class PyPDFOCR(object):
     def run_conversion(self, pdf_filename):
         """
             Does the following:
-            
+
             - Convert the PDF using GhostScript to TIFF and JPG
             - Run Tesseract on the TIFF to extract the text into HOCR (html)
             - Use PDF generator to overlay the text on the JPG and output a new PDF
             - Clean up temporary image files
-            
+
             :param pdf_filename: Scanned PDF
             :type pdf_filename: string
             :returns: OCR'ed PDF
@@ -343,7 +349,7 @@ class PyPDFOCR(object):
             img_dpi, glob_img_filename = self.gs.make_img_from_pdf(pdf_filename)
 
             fns = glob.glob(glob_img_filename)
-        
+
         except Exception:
             raise
 
@@ -357,10 +363,17 @@ class PyPDFOCR(object):
             # Run teserract
             self.ts.lang = self.lang
             hocr_filenames = self.ts.make_hocr_from_pnms(preprocess_imagefilenames)
-            
+
             # Generate new pdf with overlayed text
             #ocr_pdf_filename = self.pdf.overlay_hocr(tiff_dpi, hocr_filename, pdf_filename)
-            ocr_pdf_filename = self.pdf.overlay_hocr_pages(img_dpi, hocr_filenames, pdf_filename)
+            if self.text_pdf:
+                text_pdf_filenames = self.pdf.create_hocr_pages(
+                    img_dpi, hocr_filenames, pdf_filename)
+                ocr_pdf_filename = self.pdf.create_all_text_pdf(
+                    pdf_filename, text_pdf_filenames, self.keep_hocr)
+            else:
+                ocr_pdf_filename = self.pdf.overlay_hocr_pages(
+                    img_dpi, hocr_filenames, pdf_filename, self.keep_hocr)
 
         finally:
             # Clean up the files
@@ -374,7 +387,10 @@ class PyPDFOCR(object):
                 if locals().has_key("preprocess_imagefilenames"):  # Have to check if this was set before exception raised
                     logging.info("Cleaning up %s" % preprocess_imagefilenames)
                     self._clean_up_files(preprocess_imagefilenames) # splat the hocr_filenames as it is a list of pairs
-                    for ext in [".hocr", ".html", ".txt"]:
+                    doomed_filetypes = [".html", ".txt"]
+                    if not self.keep_hocr:
+                        doomed_filetypes.append(".hocr")
+                    for ext in doomed_filetypes:
                         fns_to_remove = [os.path.splitext(fn)[0]+ext for fn in preprocess_imagefilenames]
                         logging.info("Cleaning up %s" % fns_to_remove)
                         self._clean_up_files(fns_to_remove) # splat the hocr_filenames as it is a list of pairs
@@ -398,7 +414,7 @@ class PyPDFOCR(object):
             :returns: Target folder name
             "rtype: string
         """
-        filed_path = self.pdf_filer.move_to_matching_folder(ocr_pdffilename)  
+        filed_path = self.pdf_filer.move_to_matching_folder(ocr_pdffilename)
         print("Filed %s to %s as %s" % (ocr_pdffilename, os.path.dirname(filed_path), os.path.basename(filed_path)))
 
         tgt_path = self.pdf_filer.file_original(original_pdffilename)
@@ -406,7 +422,7 @@ class PyPDFOCR(object):
             print("Filed original file %s to %s as %s" % (original_pdffilename, os.path.dirname(tgt_path), os.path.basename(tgt_path)))
         return os.path.dirname(filed_path)
 
-  
+
     def _send_email(self, infilename, outfilename, filing ):
         """
             Send email using smtp
@@ -430,7 +446,7 @@ class PyPDFOCR(object):
         Filing: %s
         """ % (infilename, outfilename, filing)
         message = header + message
-      
+
         server = smtplib.SMTP(smtpserver)
         server.starttls()
         server.login(login,password)
@@ -438,7 +454,7 @@ class PyPDFOCR(object):
         server.quit()
 
     def go(self, argv):
-        """ 
+        """
             The main entry point into PyPDFOCR
 
             #. Parses options
@@ -469,7 +485,7 @@ class PyPDFOCR(object):
                 except Exception as e:
                     print traceback.print_exc(e)
                     py_watcher.stop()
-                    
+
         else:
             self._convert_and_file_email(self.pdf_filename)
 
@@ -486,12 +502,10 @@ class PyPDFOCR(object):
         if self.enable_email:
             self._send_email(pdf_filename, ocr_pdffilename, filing)
 
-def main(): # pragma: no cover 
+def main(): # pragma: no cover
     multiprocessing.freeze_support()
     script = PyPDFOCR()
     script.go(sys.argv[1:])
 
 if __name__ == '__main__':
     main()
-
-

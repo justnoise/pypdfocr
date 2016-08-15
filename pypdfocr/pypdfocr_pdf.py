@@ -15,7 +15,7 @@
 
 
 # Following code is adapted and modified from hocr-pdf.py released under
-# Apache License, Version 2.0 available at 
+# Apache License, Version 2.0 available at
 # https://code.google.com/p/hocr-tools/source/browse/hocr-pdf
 #   - Code was improved to allow multi-page hocr files
 """
@@ -55,15 +55,16 @@ from reportlab.platypus.paragraph import Paragraph
 from pypdfocr_util import Retry
 from functools import partial
 
+
 class RotatedPara(Paragraph):
     """
-        Used for rotating text, since the low-level rotate method in textobject's don't seem to 
+        Used for rotating text, since the low-level rotate method in textobject's don't seem to
         do anything
     """
-
-    def __init__ (self, text, style, angle):
+    def __init__ (self, text, style, angle, visible_text):
         Paragraph.__init__(self, text, style)
         self.angle = angle
+        self.visible_text = visible_text
 
     def draw(self):
         self.canv.saveState()
@@ -71,11 +72,15 @@ class RotatedPara(Paragraph):
         self.canv.rotate(self.angle)
         Paragraph.draw(self)
         self.canv.restoreState()
+
     def beginText(self, x, y):
         t = self.canv.beginText(x,y)
-        t.setTextRenderMode(3)  # Set to zero if you want the text to appear
-        #t.setTextRenderMode(0)  # Set to zero if you want the text to appear
+        if self.visible_text:
+            t.setTextRenderMode(0)  # Set to zero if you want the text to appear
+        else:
+            t.setTextRenderMode(3)  # Set to zero if you want the text to appear
         return t
+
 
 class PyPdf(object):
     """Class to create pdfs from images"""
@@ -85,9 +90,9 @@ class PyPdf(object):
     regex_fontspec = re.compile('x_font\s+(.+);\s+x_fsize\s+(\d+)')
     regex_textangle = re.compile('textangle\s+(\d+)')
 
-    def __init__(self, gs):
+    def __init__(self, gs, visible_text=False):
         self.gs = gs # Pointer to ghostscript object
-
+        self.visible_text = visible_text
 
     def get_transform(self, rotation, tx, ty):
         # Code taken from here:
@@ -129,34 +134,47 @@ class PyPdf(object):
                                                  ctm[1][0], ctm[1][1],
                                                  ctm[2][0], ctm[2][1]])
 
-    def overlay_hocr_pages(self, dpi, hocr_filenames, orig_pdf_filename):
-        
-        logging.debug("Going to overlay following files onto %s" % orig_pdf_filename)
+    def create_hocr_pages(self, dpi, hocr_filenames, orig_pdf_filename):
+        logging.debug("Going to overlay following files onto %s",
+                      orig_pdf_filename)
         # Sort the hocr_filenames into natural keys!
         hocr_filenames.sort(key=lambda x: self.natural_keys(x[0] ))
         logging.debug(hocr_filenames)
 
-        pdf_dir, pdf_basename = os.path.split(orig_pdf_filename)
-        basename = os.path.splitext(pdf_basename)[0]
-        pdf_filename = os.path.join(pdf_dir, "%s_ocr.pdf" % (basename))
-
         text_pdf_filenames = []
         for img_filename, hocr_filename in hocr_filenames:
-            text_pdf_filename = self.overlay_hocr_page(dpi, hocr_filename, img_filename)
-            logging.info("Created temp OCR'ed pdf containing only the text as %s" % (text_pdf_filename))
+            text_pdf_filename = self.overlay_hocr_page(
+                dpi, hocr_filename, img_filename)
+            logging.info("Created temp OCR'ed pdf containing only the text as %s",
+                         text_pdf_filename)
             text_pdf_filenames.append(text_pdf_filename)
+        return text_pdf_filenames
 
-        # Now, concatenate this text_pdfs into one single file.
-        # This is a hack to save memory/running time when we have to do the actual merge with a writer
-
-        all_text_filename = os.path.join(pdf_dir, "%s_text.pdf" % (basename))
+    def create_all_text_pdf(self, orig_pdf_filename, text_pdf_filenames, keep_hocr):
+        pdfdir = os.path.dirname(orig_pdf_filename)
+        pdfname_noext = self.get_pdfname_noext(orig_pdf_filename)
+        all_text_filename = os.path.join(pdfdir, "%s_text.pdf" % (pdfname_noext))
         merger = PdfFileMerger()
         for text_pdf_filename in text_pdf_filenames:
             merger.append(PdfFileReader(file(text_pdf_filename, 'rb')))
         merger.write(all_text_filename)
         merger.close()
-	del merger
+        # Windows sometimes locks the temp text file for no reason, so
+        # we need to retry a few times to delete
+        if not keep_hocr:
+            for fn in text_pdf_filenames:
+                Retry(partial(os.remove, fn), tries=10, pause=3).call_with_retry()
 
+        return all_text_filename
+
+    def get_pdfname_noext(self, pdfpath):
+        return os.path.splitext(os.path.basename(pdfpath))[0]
+
+    def overlay_hocr_pages(self, dpi, hocr_filenames, orig_pdf_filename, keep_hocr=False):
+        text_pdf_filenames = self.create_hocr_pages(dpi, hocr_filenames, orig_pdf_filename)
+        # Now, concatenate this text_pdfs into one single file.
+        # This is a hack to save memory/running time when we have to do the actual merge with a writer
+        all_text_filename = self.create_all_text_pdf(orig_pdf_filename, text_pdf_filenames, keep_hocr)
 
         writer = PdfFileWriter()
         orig = open(orig_pdf_filename, 'rb')
@@ -166,17 +184,14 @@ class PyPdf(object):
             orig_pg = self._get_merged_single_page(orig_pg, text_pg)
             writer.addPage(orig_pg)
 
+        pdfdir = os.path.dirname(orig_pdf_filename)
+        pdf_filename = os.path.join(pdfdir, "%s_ocr.pdf" % (self.get_pdfname_noext(orig_pdf_filename)))
         with open(pdf_filename, 'wb') as f:
             # Flush out this page merge so we can close the text_file
             writer.write(f)
 
         orig.close()
         text_file.close()
-
-        # Windows sometimes locks the temp text file for no reason, so we need to retry a few times to delete
-        for fn in text_pdf_filenames:
-            #os.remove(fn)
-            Retry(partial(os.remove, fn), tries=10, pause=3).call_with_retry() 
 
         os.remove(all_text_filename)
         logging.info("Created OCR'ed pdf as %s" % (pdf_filename))
@@ -199,7 +214,6 @@ class PyPdf(object):
             original_page.mergePage(ocr_text_page)
         original_page.compressContentStreams()
         return original_page
-
 
     def _get_img_dims(self, img_filename):
         """
@@ -270,15 +284,15 @@ class PyPdf(object):
       """Draw an invisible text layer for OCR data.
 
         This function really needs to get cleaned up
-        
+
       """
       hocr = ElementTree()
-      try: 
+      try:
         # It's possible tesseract has failed and written garbage to this hocr file, so we need to catch any exceptions
           hocr.parse(hocrfile)
       except Exception:
           logging.info("Error loading hocr, not adding any text")
-          return 
+          return
 
       logging.debug(xml.etree.ElementTree.tostring(hocr.getroot()))
       for c in hocr.getroot():  # Find the <body> tag
@@ -344,15 +358,12 @@ class PyPdf(object):
           normal.fontName = "Helvetica"
           normal.fontSize = font_size
 
-          para = RotatedPara(escape(word.text.strip()), normal, textangle)
+          para = RotatedPara(escape(word.text.strip()), normal, textangle, self.visible_text)
           para.wrapOn(pdf, para.minWidth(), 100)  # Not sure what to use as the height  here
           para.drawOn(pdf, x*72/dpi, height - y*72/dpi)
 
-
-
     def polyval(self,poly, x):
       return x * poly[0] + poly[1]
-
 
     def _get_font_spec(self, tag):
         try:

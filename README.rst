@@ -1,7 +1,11 @@
-PyPDFOCR - Tesseract-OCR based PDF filing
+Changes in this Fork:
 =========================================
 
-|image0| |image1| |image2| |passing| |quality| |Coverage Status|
+- Added text-pdf option to output a pdf containing only OCRed text without an image overlay
+- Added keep-hocr option, prevents cleaning up intermediate hocr files
+
+PyPDFOCR - Tesseract-OCR based PDF filing
+=========================================
 
 This program will help manage your scanned PDFs by doing the following:
 
@@ -200,7 +204,7 @@ file and then use the ``-m`` option when invoking ``pypdfocr``:
     mail_smtp_login: "virantha@gmail.com"
     mail_smtp_password: "PASSWORD"
     mail_from_addr: "virantha@gmail.com"
-    mail_to_list: 
+    mail_to_list:
         - "virantha@gmail.com"
         - "person2@gmail.com"
 
@@ -234,7 +238,7 @@ document scans when pypdfocr is watching a directory, you can specify the follow
 option in the configuration file:
 
 ::
-    
+
     watch:
         scan_interval: 6
 
@@ -311,8 +315,8 @@ the path:
 -  Poppler http://poppler.freedesktop.org/  (`Windows <http://sourceforge.net/projects/poppler-win32/>`__)
 
 Poppler is only required if you want pypdfocr to figure out the original PDF resolution
-automatically; just make sure you have ``pdfimages`` in your path.   Note that the 
-`xpdf <http://www.foolabs.com/xpdf/download.html>`__ provided ``pdfimages`` does not work for this, 
+automatically; just make sure you have ``pdfimages`` in your path.   Note that the
+`xpdf <http://www.foolabs.com/xpdf/download.html>`__ provided ``pdfimages`` does not work for this,
 because it does not support the ``-list`` option to list the table of images in a PDF file.
 
 On Mac OS X, you can install these using homebrew:
@@ -337,11 +341,11 @@ then you need to find your tessdata directory and do the following:
 
 ::
 
-    cd /usr/local/share/tessdata 
-    cp eng.traineddata osd.traineddata 
+    cd /usr/local/share/tessdata
+    cp eng.traineddata osd.traineddata
 
 ``osd`` stands for Orientation and Script Detection, so you need to copy the .traineddata
-for whatever language you want to scan in as ``osd.traineddata``.  If you don't do this step, 
+for whatever language you want to scan in as ``osd.traineddata``.  If you don't do this step,
 then any landscape document will produce garbage
 
 Disclaimer
@@ -350,12 +354,3 @@ Disclaimer
 While test coverage is at 84% right now, Sphinx docs generation is at an
 early stage. The software is distributed on an "AS IS" BASIS, WITHOUT
 WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-.. |image0| image:: https://badge.fury.io/py/pypdfocr.png
-   :target: https://pypi.python.org/pypi/pypdfocr
-.. |image1| image:: https://pypip.in/d/pypdfocr/badge.png
-.. |image2| image:: https://pypip.in/license/pypdfocr/badge.png
-.. |passing| image:: https://scrutinizer-ci.com/g/virantha/pypdfocr/badges/build.png?b=master
-.. |quality| image:: https://scrutinizer-ci.com/g/virantha/pypdfocr/badges/quality-score.png?b=master
-.. |Coverage Status| image:: https://coveralls.io/repos/virantha/pypdfocr/badge.png?branch=develop
-   :target: https://coveralls.io/r/virantha/pypdfocr
